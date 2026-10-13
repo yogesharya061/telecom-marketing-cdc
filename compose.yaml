@@ -1,0 +1,104 @@
+x-flink: &flink
+  build: ./flink
+  environment:
+    FLINK_PROPERTIES: |
+      jobmanager.rpc.address: jobmanager
+      taskmanager.numberOfTaskSlots: 4
+      parallelism.default: 2
+      jobmanager.memory.process.size: 1024m
+      taskmanager.memory.process.size: 1536m
+  volumes:
+    - checkpoints:/opt/flink/checkpoints
+    - ./sql:/opt/flink/project-sql:ro
+x-app: &app
+  build: .
+  environment:
+    DATABASE_URL: postgresql://demo:demo@postgres:5432/telecom
+    KAFKA_BOOTSTRAP: kafka:9092
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+services:
+  postgres:
+    image: postgres:16.6
+    command: [postgres, -c, wal_level=logical, -c, max_replication_slots=10, -c, max_wal_senders=10]
+    environment:
+      POSTGRES_DB: telecom
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U demo -d telecom]
+      interval: 5s
+      retries: 30
+  kafka:
+    image: apache/kafka:3.9.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    volumes:
+      - kafka-data:/tmp/kraft-combined-logs
+    healthcheck:
+      test: [CMD-SHELL, /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+  connect:
+    image: quay.io/debezium/connect:3.0.0.Final
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: telecom-connect
+      CONFIG_STORAGE_TOPIC: connect-configs
+      OFFSET_STORAGE_TOPIC: connect-offsets
+      STATUS_STORAGE_TOPIC: connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      KEY_CONVERTER_SCHEMAS_ENABLE: 'false'
+      VALUE_CONVERTER_SCHEMAS_ENABLE: 'false'
+    ports: ['127.0.0.1:8083:8083']
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+  jobmanager:
+    <<: *flink
+    command: jobmanager
+    ports: ['127.0.0.1:8081:8081']
+  taskmanager:
+    <<: *flink
+    command: taskmanager
+    depends_on: [jobmanager]
+  worker:
+    <<: *app
+    command: python -m app.worker
+    restart: on-failure
+  cli:
+    <<: *app
+    profiles: [tools]
+    volumes:
+      - ./connect:/project/connect:ro
+    command: python -m app.demo
+volumes:
+  pgdata:
+  kafka-data:
+  checkpoints:

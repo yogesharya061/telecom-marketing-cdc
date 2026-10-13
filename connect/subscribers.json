@@ -1,0 +1,18 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "tasks.max": "1",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "demo",
+  "database.password": "demo",
+  "database.dbname": "telecom",
+  "topic.prefix": "telecom",
+  "plugin.name": "pgoutput",
+  "slot.name": "telecom_slot",
+  "publication.name": "telecom_publication",
+  "publication.autocreate.mode": "disabled",
+  "table.include.list": "crm.subscribers",
+  "snapshot.mode": "initial",
+  "tombstones.on.delete": "false",
+  "heartbeat.interval.ms": "10000"
+}
